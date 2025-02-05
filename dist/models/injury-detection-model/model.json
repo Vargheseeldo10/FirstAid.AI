@@ -1,0 +1,92 @@
+{
+  "modelTopology": {
+    "class_name": "Sequential",
+    "config": {
+      "name": "injury_detection_model",
+      "layers": [
+        {
+          "class_name": "Conv2D",
+          "config": {
+            "filters": 16,
+            "kernel_size": [3, 3],
+            "activation": "relu",
+            "input_shape": [128, 128, 3],
+            "padding": "same",
+            "name": "conv2d_1"
+          }
+        },
+        {
+          "class_name": "MaxPooling2D",
+          "config": {
+            "pool_size": [2, 2],
+            "name": "maxpool_1"
+          }
+        },
+        {
+          "class_name": "Conv2D",
+          "config": {
+            "filters": 32,
+            "kernel_size": [3, 3],
+            "activation": "relu",
+            "padding": "same",
+            "name": "conv2d_2"
+          }
+        },
+        {
+          "class_name": "MaxPooling2D",
+          "config": {
+            "pool_size": [2, 2],
+            "name": "maxpool_2"
+          }
+        },
+        {
+          "class_name": "Flatten",
+          "config": {
+            "name": "flatten"
+          }
+        },
+        {
+          "class_name": "Dense",
+          "config": {
+            "units": 32,
+            "activation": "relu",
+            "name": "dense_1"
+          }
+        },
+        {
+          "class_name": "Dropout",
+          "config": {
+            "rate": 0.5,
+            "name": "dropout_1"
+          }
+        },
+        {
+          "class_name": "Dense",
+          "config": {
+            "units": 4,
+            "activation": "softmax",
+            "name": "dense_2"
+          }
+        }
+      ]
+    }
+  },
+  "weightsManifest": [
+    {
+      "paths": ["weights.bin"],
+      "weights": [
+        {"name": "conv2d_1/kernel", "shape": [3, 3, 3, 16], "dtype": "float32"},
+        {"name": "conv2d_1/bias", "shape": [16], "dtype": "float32"},
+        {"name": "conv2d_2/kernel", "shape": [3, 3, 16, 32], "dtype": "float32"},
+        {"name": "conv2d_2/bias", "shape": [32], "dtype": "float32"},
+        {"name": "dense_1/kernel", "shape": [8192, 32], "dtype": "float32"},
+        {"name": "dense_1/bias", "shape": [32], "dtype": "float32"},
+        {"name": "dense_2/kernel", "shape": [32, 4], "dtype": "float32"},
+        {"name": "dense_2/bias", "shape": [4], "dtype": "float32"}
+      ]
+    }
+  ],
+  "format": "layers-model",
+  "generatedBy": "TensorFlow.js",
+  "convertedBy": null
+}
