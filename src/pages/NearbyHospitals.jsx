@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import { MapPin, Phone, Navigation } from 'lucide-react';
+import { MapPin, Phone, Navigation, AlertCircle } from 'lucide-react';
+
 import L from 'leaflet';
 
 // Fix for default marker icons in Leaflet
@@ -31,7 +32,6 @@ const hospitalIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
-// Component to recenter map when location changes
 function RecenterMap({ position }) {
   const map = useMap();
   useEffect(() => {
@@ -46,6 +46,7 @@ function NearbyHospitals() {
   const [currentPosition, setCurrentPosition] = useState(null);
   const [hospitals, setHospitals] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (navigator.geolocation) {
@@ -60,15 +61,18 @@ function NearbyHospitals() {
         },
         (error) => {
           console.error('Error getting location:', error);
+          setError('Unable to get your location. Please enable location services and refresh the page.');
           setIsLoading(false);
         }
       );
+    } else {
+      setError('Geolocation is not supported by your browser.');
+      setIsLoading(false);
     }
   }, []);
 
   const searchNearbyHospitals = async (location) => {
     try {
-      // Using Overpass API to fetch hospitals
       const query = `
         [out:json][timeout:25];
         (
@@ -83,23 +87,44 @@ function NearbyHospitals() {
       
       const response = await fetch('https://overpass-api.de/api/interpreter', {
         method: 'POST',
-        body: query
+        body: query,
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        }
       });
       
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const data = await response.json();
-      const hospitalData = data.elements.map(element => ({
-        id: element.id,
-        name: element.tags.name || 'Unnamed Hospital',
-        lat: element.lat,
-        lng: element.lon,
-        address: element.tags['addr:street'] ? `${element.tags['addr:street']} ${element.tags['addr:housenumber'] || ''}` : 'Address not available',
-        phone: element.tags.phone || null
-      }));
+      
+      if (!data || !data.elements) {
+        throw new Error('Invalid data received from Overpass API');
+      }
+
+      const hospitalData = data.elements
+        .filter(element => element.tags && element.lat && element.lon)
+        .map(element => ({
+          id: element.id,
+          name: element.tags.name || 'Unnamed Hospital',
+          lat: element.lat,
+          lng: element.lon,
+          address: element.tags['addr:street'] 
+            ? `${element.tags['addr:street']} ${element.tags['addr:housenumber'] || ''}`
+            : 'Address not available',
+          phone: element.tags.phone || null
+        }));
       
       setHospitals(hospitalData);
-      setIsLoading(false);
+      
+      if (hospitalData.length === 0) {
+        setError('No hospitals found in your area. Try increasing the search radius.');
+      }
     } catch (error) {
       console.error('Error fetching hospitals:', error);
+      setError('Unable to fetch nearby hospitals. Please try again later.');
+    } finally {
       setIsLoading(false);
     }
   };
@@ -110,6 +135,26 @@ function NearbyHospitals() {
       window.open(url, '_blank');
     }
   };
+
+  
+if (error) {
+  return (
+    <div className="container mx-auto px-4 py-8">
+      <div className="bg-red-50 border-l-4 border-red-400 p-4 rounded">
+        <div className="flex">
+          <div className="flex-shrink-0">
+            <AlertCircle className="h-5 w-5 text-red-400" />
+          </div>
+          <div className="ml-3">
+            <p className="text-sm text-red-700">
+              {error}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -161,36 +206,42 @@ function NearbyHospitals() {
           </div>
 
           <div className="space-y-4 max-h-[600px] overflow-y-auto">
-            {hospitals.map((hospital) => (
-              <div
-                key={hospital.id}
-                className="bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow"
-              >
-                <h3 className="font-semibold mb-2">{hospital.name}</h3>
-                <p className="text-sm text-gray-600 mb-2 flex items-center gap-2">
-                  <MapPin size={16} />
-                  {hospital.address}
-                </p>
-                <div className="flex gap-2 mt-4">
-                  {hospital.phone && (
-                    <a
-                      href={`tel:${hospital.phone}`}
-                      className="flex items-center gap-1 bg-green-500 text-white px-3 py-1 rounded-md text-sm hover:bg-green-600 transition-colors"
-                    >
-                      <Phone size={16} />
-                      Call
-                    </a>
-                  )}
-                  <button
-                    onClick={() => getDirections(hospital)}
-                    className="flex items-center gap-1 bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600 transition-colors"
-                  >
-                    <Navigation size={16} />
-                    Directions
-                  </button>
-                </div>
+            {hospitals.length === 0 ? (
+              <div className="text-center text-gray-500">
+                No hospitals found in your area
               </div>
-            ))}
+            ) : (
+              hospitals.map((hospital) => (
+                <div
+                  key={hospital.id}
+                  className="bg-white rounded-lg shadow-md p-4 hover:shadow-lg transition-shadow"
+                >
+                  <h3 className="font-semibold mb-2">{hospital.name}</h3>
+                  <p className="text-sm text-gray-600 mb-2 flex items-center gap-2">
+                    <MapPin size={16} />
+                    {hospital.address}
+                  </p>
+                  <div className="flex gap-2 mt-4">
+                    {hospital.phone && (
+                      <a
+                        href={`tel:${hospital.phone}`}
+                        className="flex items-center gap-1 bg-green-500 text-white px-3 py-1 rounded-md text-sm hover:bg-green-600 transition-colors"
+                      >
+                        <Phone size={16} />
+                        Call
+                      </a>
+                    )}
+                    <button
+                      onClick={() => getDirections(hospital)}
+                      className="flex items-center gap-1 bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600 transition-colors"
+                    >
+                      <Navigation size={16} />
+                      Directions
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}

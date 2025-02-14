@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Upload, Camera, AlertTriangle, Check } from 'lucide-react';
 import { useInjuryDetectionModel } from '../components/useInjuryDetectionModel';
 import { useInjuryClassification } from '../components/InjuryClassificationContext';
@@ -10,16 +10,44 @@ function InjuryDetection() {
   const [isLoading, setIsLoading] = useState(false);
   const [isUsingCamera, setIsUsingCamera] = useState(false);
   const [cameraError, setCameraError] = useState(null);
+  const [hasCameraSupport, setHasCameraSupport] = useState(null);
+  const [isVideoElementReady, setIsVideoElementReady] = useState(false);
   
   const fileInputRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const streamRef = useRef(null);
 
   const { model, isLoading: isModelLoading, classifyImage } = useInjuryDetectionModel();
   const { getInjuryClassification } = useInjuryClassification();
 
+  const setVideoRef = useCallback(node => {
+    videoRef.current = node;
+    setIsVideoElementReady(!!node);
+  }, []);
+
+  // Check for camera support on component mount
+  useEffect(() => {
+    const checkCameraSupport = async () => {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const hasCamera = devices.some(device => device.kind === 'videoinput');
+        setHasCameraSupport(hasCamera);
+      } catch (error) {
+        console.error('Error checking camera support:', error);
+        setHasCameraSupport(false);
+      }
+    };
+
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      checkCameraSupport();
+    } else {
+      setHasCameraSupport(false);
+    }
+  }, []);
+
   const handleImageUpload = (event) => {
-    const file = event.target.files[0];
+    const file = event.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -32,20 +60,70 @@ function InjuryDetection() {
   };
 
   const startCamera = async () => {
+    // Reset any previous errors
     setCameraError(null);
+    
+    // Check for camera support
+    if (!hasCameraSupport) {
+      setCameraError('No camera detected on this device');
+      return;
+    }
+
+    // Check if video element is ready
+    if (!isVideoElementReady) {
+      setCameraError('Camera initialization in progress. Please try again.');
+      return;
+    }
+
+    // Stop any existing stream
+    await stopCamera();
+
     try {
+      // Request camera access with fallback options
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { 
+        video: {
+          facingMode: 'environment',
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          facingMode: 'environment'
+          frameRate: { ideal: 30 }
         }
+      }).catch(async () => {
+        // Fallback to any available video device
+        return navigator.mediaDevices.getUserMedia({
+          video: true
+        });
       });
 
+      // Double check video element is still available
+      if (!videoRef.current) {
+        stream.getTracks().forEach(track => track.stop());
+        throw new Error('Video element not available');
+      }
+
+      // Store stream reference
+      streamRef.current = stream;
       videoRef.current.srcObject = stream;
-      videoRef.current.onloadedmetadata = () => {
-        videoRef.current.play();
-      };
+
+      // Wait for video to be ready
+      await new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error('Video load timeout'));
+        }, 10000); // 10 second timeout
+
+        const handleLoadedMetadata = () => {
+          clearTimeout(timeoutId);
+          if (videoRef.current) {
+            videoRef.current.play()
+              .then(resolve)
+              .catch(reject);
+          } else {
+            reject(new Error('Video element not available'));
+          }
+        };
+
+        videoRef.current.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true });
+      });
+
       setIsUsingCamera(true);
     } catch (error) {
       handleCameraError(error);
@@ -55,17 +133,25 @@ function InjuryDetection() {
   const handleCameraError = (error) => {
     console.error('Camera access error:', error);
     const errorMap = {
-      NotAllowedError: 'Camera permission denied',
-      NotFoundError: 'No camera found',
-      OverconstrainedError: 'Camera settings incompatible'
+      NotAllowedError: 'Camera access denied. Please grant camera permissions.',
+      NotFoundError: 'No camera found on this device.',
+      NotReadableError: 'Camera is in use by another application.',
+      OverconstrainedError: 'Camera does not meet the required constraints.',
+      TypeError: 'Camera initialization failed.',
+      AbortError: 'Camera access was aborted.'
     };
     
-    setCameraError(errorMap[error.name] || 'Camera access failed');
+    setCameraError(errorMap[error.name] || `Camera access failed: ${error.message}`);
     setIsUsingCamera(false);
     stopCamera();
   };
 
   const captureImage = async () => {
+    if (!videoRef.current || !canvasRef.current) {
+      setCameraError('Camera components not initialized');
+      return;
+    }
+
     try {
       const result = await processWebcamCapture(
         videoRef.current, 
@@ -73,18 +159,34 @@ function InjuryDetection() {
       );
       
       setImage(result.src);
-      stopCamera();
+      await stopCamera();
     } catch (error) {
       console.error('Image capture error:', error);
       setCameraError('Failed to capture image');
     }
   };
 
-  const stopCamera = () => {
-    const tracks = videoRef.current?.srcObject?.getTracks() || [];
-    tracks.forEach(track => track.stop());
+  const stopCamera = async () => {
     setIsUsingCamera(false);
+    
+    // Stop all tracks in the current stream
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+
+    // Clear video source
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
   };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
 
   const analyzeImage = async () => {
     if (!model || !image) return;
@@ -108,10 +210,6 @@ function InjuryDetection() {
     }
   };
 
-  useEffect(() => {
-    return () => stopCamera();
-  }, []);
-
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="max-w-3xl mx-auto">
@@ -126,18 +224,26 @@ function InjuryDetection() {
 
           <div className="flex justify-center gap-4 mb-6">
             <button
-              onClick={() => fileInputRef.current.click()}
+              onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600"
             >
               <Upload size={20} /> Upload Image
             </button>
-            <button
-              onClick={isUsingCamera ? captureImage : startCamera}
-              disabled={isModelLoading}
-              className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 disabled:opacity-50"
-            >
-              <Camera size={20} /> {isUsingCamera ? 'Capture' : 'Use Camera'}
-            </button>
+            {hasCameraSupport && (
+              <button
+                onClick={isUsingCamera ? captureImage : startCamera}
+                disabled={isModelLoading || !isVideoElementReady}
+                className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 disabled:opacity-50"
+              >
+                <Camera size={20} />
+                {isModelLoading 
+                  ? 'Loading...' 
+                  : isUsingCamera 
+                    ? 'Capture' 
+                    : 'Use Camera'
+                }
+              </button>
+            )}
           </div>
 
           <input
@@ -150,21 +256,28 @@ function InjuryDetection() {
           <canvas ref={canvasRef} className="hidden" />
 
           <div className="relative aspect-video mb-6">
-            {isUsingCamera ? (
-              <video
-                ref={videoRef}
-                className="w-full h-full object-cover rounded-lg"
-                playsInline
-              />
-            ) : image ? (
-              <img
-                src={image}
-                alt="Uploaded injury"
-                className="w-full h-full object-cover rounded-lg"
-              />
-            ) : (
-              <div className="w-full h-full bg-gray-100 rounded-lg flex items-center justify-center">
-                <p className="text-gray-500">No image selected</p>
+            {/* Always render video element but hide when not in use */}
+            <video
+              ref={setVideoRef}
+              className={`absolute inset-0 w-full h-full object-cover rounded-lg ${!isUsingCamera && 'hidden'}`}
+              playsInline
+              muted
+              autoPlay
+            />
+
+            {!isUsingCamera && (
+              <div className="relative w-full h-full">
+                {image ? (
+                  <img
+                    src={image}
+                    alt="Uploaded injury"
+                    className="w-full h-full object-cover rounded-lg"
+                  />
+                ) : (
+                  <div className="w-full h-full bg-gray-100 rounded-lg flex items-center justify-center">
+                    <p className="text-gray-500">No image selected</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
