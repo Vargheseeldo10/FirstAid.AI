@@ -1,49 +1,74 @@
 import * as tf from '@tensorflow/tfjs';
 
 export const preprocessImage = (imageElement) => {
-  try {
-    return tf.tidy(() => {
-      return tf.browser.fromPixels(imageElement)
-        .resizeNearestNeighbor([224, 224])
-        .toFloat()
-        .div(tf.scalar(255))
-        .expandDims();
-    });
-  } catch (error) {
-    console.error('Image preprocessing error:', error);
-    return null;
+  if (!imageElement || !imageElement.complete || !imageElement.naturalHeight) {
+    throw new Error('Invalid image element');
   }
-};
 
-export const processWebcamCapture = (videoElement, canvasElement) => {
-  if (!canvasElement) {
-    canvasElement = document.createElement('canvas');
-  }
-  
-  canvasElement.width = videoElement.videoWidth;
-  canvasElement.height = videoElement.videoHeight;
+  return tf.tidy(() => {
+    // Convert image to tensor
+    const tensor = tf.browser.fromPixels(imageElement);
 
-  const context = canvasElement.getContext('2d');
-  context.drawImage(videoElement, 0, 0);
+    // Check tensor dimensions
+    if (tensor.shape[0] === 0 || tensor.shape[1] === 0) {
+      tensor.dispose();
+      throw new Error('Invalid image dimensions');
+    }
 
-  const imageElement = new Image();
-  imageElement.src = canvasElement.toDataURL('image/jpeg');
-
-  return new Promise((resolve, reject) => {
-    imageElement.onload = () => resolve({ src: imageElement.src, element: imageElement });
-    imageElement.onerror = reject;
+    // Resize to 128x128 to match model's expected input shape
+    return tensor
+      .resizeNearestNeighbor([128, 128])  // Changed from 224x224 to 128x128
+      .toFloat()
+      .div(tf.scalar(255))
+      .expandDims();
   });
 };
 
-export const dataURItoBlob = (dataURI) => {
-  const byteString = atob(dataURI.split(',')[1]);
-  const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-  const ab = new ArrayBuffer(byteString.length);
-  const ia = new Uint8Array(ab);
+export const processWebcamCapture = (videoElement, canvasElement) => {
+  return new Promise((resolve, reject) => {
+    if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
+      reject(new Error('Invalid video element'));
+      return;
+    }
 
-  for (let i = 0; i < byteString.length; i++) {
-    ia[i] = byteString.charCodeAt(i);
-  }
+    if (!canvasElement) {
+      reject(new Error('Canvas element is required'));
+      return;
+    }
 
-  return new Blob([ab], { type: mimeString });
+    try {
+      // Set canvas dimensions to match video
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+
+      const context = canvasElement.getContext('2d');
+      if (!context) {
+        reject(new Error('Failed to get canvas context'));
+        return;
+      }
+
+      // Draw video frame to canvas
+      context.drawImage(videoElement, 0, 0);
+
+      // Convert to image
+      const imageDataUrl = canvasElement.toDataURL('image/jpeg', 0.9);
+      const imageElement = new Image();
+
+      imageElement.onload = () => {
+        if (imageElement.width === 0 || imageElement.height === 0) {
+          reject(new Error('Invalid captured image dimensions'));
+          return;
+        }
+        resolve({ src: imageDataUrl, element: imageElement });
+      };
+
+      imageElement.onerror = () => {
+        reject(new Error('Failed to load captured image'));
+      };
+
+      imageElement.src = imageDataUrl;
+    } catch (error) {
+      reject(new Error(`Capture processing failed: ${error.message}`));
+    }
+  });
 };
