@@ -17,7 +17,7 @@ export const preprocessImage = (imageElement) => {
 
     // Resize to 128x128 to match model's expected input shape
     return tensor
-      .resizeNearestNeighbor([128, 128])  // Changed from 224x224 to 128x128
+      .resizeNearestNeighbor([224, 224])  // Changed from 224x224 to 128x128
       .toFloat()
       .div(tf.scalar(255))
       .expandDims();

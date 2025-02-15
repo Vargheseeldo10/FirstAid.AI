@@ -30,7 +30,7 @@ export const useInjuryDetectionModel = () => {
 
       // Input layer with batch normalization
       newModel.add(tf.layers.conv2d({
-        inputShape: [128, 128, 3],
+        inputShape: [224, 224, 3],
         filters: 32,
         kernelSize: 3,
         activation: 'relu',
